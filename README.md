@@ -24,9 +24,13 @@ A Chrome extension with advanced search and filtering for Rate My Professors. Un
 4. Click **Load unpacked** and select the unzipped folder
 5. The Better RMP icon will appear in your toolbar
 
-### Backend (required)
+That's it — the backend API is hosted and the extension connects to it automatically. No local server setup needed.
 
-The extension needs the backend API running locally:
+> **Note:** The hosted backend runs on Render's free tier, so the first request after inactivity may take ~30 seconds to wake up. Subsequent requests are fast.
+
+### Self-hosting the backend (optional)
+
+If you prefer to run the backend locally or on your own server:
 
 ```bash
 # Clone the repo
@@ -40,7 +44,7 @@ pip install -r backend/requirements.txt
 python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
 ```
 
-The API will be available at `http://localhost:8000`. Interactive docs at `http://localhost:8000/docs`.
+Then set `VITE_API_URL=http://localhost:8000` in `extension/.env` and rebuild the extension with `npm run build`.
 
 ## Architecture
 
@@ -49,7 +53,7 @@ The API will be available at `http://localhost:8000`. Interactive docs at `http:
 │     Chrome Extension (Popup UI)       │
 │     React 19 + TypeScript + Tailwind  │
 └──────────────┬────────────────────────┘
-               │ HTTP (localhost:8000)
+               │ HTTPS (Render)
 ┌──────────────▼────────────────────────┐
 │         FastAPI Backend               │
 │                                       │
@@ -154,6 +158,8 @@ better_rmp/
 │   │       ├── ProfessorDetail.tsx  # Full detail + reviews
 │   │       └── ErrorBoundary.tsx    # Graceful error handling
 │   └── vite.config.ts
+├── Dockerfile               # Backend container for deployment
+├── render.yaml              # Render.com one-click deploy config
 └── .github/workflows/
     ├── ci.yml           # Test + build on push/PR
     └── release.yml      # Build + zip + GitHub Release on tag

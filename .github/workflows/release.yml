@@ -39,8 +39,10 @@ jobs:
         working-directory: extension
         run: npm ci
 
-      - name: Build extension
+      - name: Build extension (production API URL)
         working-directory: extension
+        env:
+          VITE_API_URL: https://better-rmp.onrender.com
         run: npm run build
 
       - name: Create zip
