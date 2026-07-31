@@ -1,14 +1,17 @@
-"""
-Direct client for the RateMyProfessors GraphQL API.
+"""Direct client for the RateMyProfessors GraphQL API.
 No API key required — uses the public auth token embedded in RMP's frontend.
+Includes retry logic with exponential backoff and structured logging.
 """
 
 import asyncio
 import base64
+import logging
 import time
 from typing import Optional
 
 import httpx
+
+logger = logging.getLogger("better_rmp.rmp_client")
 
 RMP_GRAPHQL_URL = "https://www.ratemyprofessors.com/graphql"
 RMP_AUTH_TOKEN = base64.b64encode(b"test:test").decode()
@@ -19,9 +22,26 @@ HEADERS = {
     "User-Agent": "BetterRMP/1.0",
 }
 
-# Rate limiting: max 2 requests per second
+MAX_RETRIES = 3
+BASE_BACKOFF = 1.0  # seconds
+_MIN_INTERVAL = 0.5  # rate limit: max 2 requests/sec
 _last_request_time = 0.0
-_MIN_INTERVAL = 0.5
+
+
+class RMPError(Exception):
+    """Base exception for RMP client errors."""
+
+
+class RMPGraphQLError(RMPError):
+    """The RMP GraphQL API returned an errors array."""
+
+
+class RMPConnectionError(RMPError):
+    """Could not connect to the RMP API."""
+
+
+class RMPRateLimitError(RMPError):
+    """RMP rate-limited our request."""
 
 
 async def _rate_limited_post(client: httpx.AsyncClient, payload: dict) -> dict:
@@ -32,12 +52,43 @@ async def _rate_limited_post(client: httpx.AsyncClient, payload: dict) -> dict:
         await asyncio.sleep(wait)
     _last_request_time = time.monotonic()
 
-    resp = await client.post(RMP_GRAPHQL_URL, json=payload, headers=HEADERS, timeout=30.0)
-    resp.raise_for_status()
-    data = resp.json()
-    if "errors" in data:
-        raise RuntimeError(f"RMP GraphQL error: {data['errors']}")
-    return data
+    last_exc: Exception | None = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            resp = await client.post(
+                RMP_GRAPHQL_URL, json=payload, headers=HEADERS, timeout=30.0
+            )
+
+            if resp.status_code == 429:
+                backoff = BASE_BACKOFF * (2 ** (attempt - 1))
+                logger.warning("RMP rate limited (429), retrying in %.1fs (attempt %d/%d)", backoff, attempt, MAX_RETRIES)
+                await asyncio.sleep(backoff)
+                continue
+
+            resp.raise_for_status()
+            data = resp.json()
+
+            if "errors" in data:
+                raise RMPGraphQLError(f"RMP GraphQL error: {data['errors']}")
+
+            return data
+
+        except httpx.TimeoutException as e:
+            last_exc = e
+            backoff = BASE_BACKOFF * (2 ** (attempt - 1))
+            logger.warning("RMP request timed out, retrying in %.1fs (attempt %d/%d)", backoff, attempt, MAX_RETRIES)
+            await asyncio.sleep(backoff)
+
+        except httpx.ConnectError as e:
+            last_exc = e
+            backoff = BASE_BACKOFF * (2 ** (attempt - 1))
+            logger.warning("RMP connection error: %s, retrying in %.1fs (attempt %d/%d)", str(e)[:100], backoff, attempt, MAX_RETRIES)
+            await asyncio.sleep(backoff)
+
+        except (httpx.HTTPStatusError, RMPGraphQLError):
+            raise
+
+    raise RMPConnectionError(f"Failed to reach RMP after {MAX_RETRIES} attempts: {last_exc}")
 
 
 # ── Search schools ────────────────────────────────────────────────────────────
@@ -156,7 +207,7 @@ async def get_all_professors_at_school(school_id: str) -> list[dict]:
 
             professors = [edge["node"] for edge in edges]
             all_professors.extend(professors)
-            print(f"  Page {page}: fetched {len(professors)} professors (total: {len(all_professors)})")
+            logger.info("Page %d: fetched %d professors (total: %d)", page, len(professors), len(all_professors))
 
             if not page_info["hasNextPage"]:
                 break

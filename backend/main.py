@@ -4,21 +4,32 @@ Provides search/filter endpoints over cached RMP professor data.
 """
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from . import database as db
 from . import rmp_client
+from .rmp_client import RMPError, RMPConnectionError, RMPGraphQLError
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("better_rmp.api")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    logger.info("Starting Better RMP API")
     db.init_db()
     yield
+    logger.info("Shutting down Better RMP API")
 
 
 app = FastAPI(
@@ -35,6 +46,35 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── Global exception handlers ────────────────────────────────────────────────
+
+@app.exception_handler(RMPConnectionError)
+async def rmp_connection_error_handler(request: Request, exc: RMPConnectionError):
+    logger.error("RMP connection error: %s", str(exc))
+    return JSONResponse(
+        status_code=502,
+        content={"detail": "Rate My Professors is currently unreachable. Please try again later."},
+    )
+
+
+@app.exception_handler(RMPGraphQLError)
+async def rmp_graphql_error_handler(request: Request, exc: RMPGraphQLError):
+    logger.error("RMP GraphQL error: %s", str(exc))
+    return JSONResponse(
+        status_code=502,
+        content={"detail": "Rate My Professors returned an unexpected error."},
+    )
+
+
+@app.exception_handler(RMPError)
+async def rmp_error_handler(request: Request, exc: RMPError):
+    logger.error("RMP error: %s", str(exc))
+    return JSONResponse(
+        status_code=502,
+        content={"detail": f"Rate My Professors error: {str(exc)}"},
+    )
 
 
 # ── Pydantic models ──────────────────────────────────────────────────────────
