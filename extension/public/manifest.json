@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Better RMP",
+  "description": "Advanced search and filtering for Rate My Professors — filter by department, rating, difficulty, tags, and more.",
+  "version": "1.0.0",
+  "permissions": ["storage"],
+  "action": {
+    "default_popup": "index.html",
+    "default_title": "Better RMP"
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}
